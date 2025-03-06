@@ -33,12 +33,26 @@ This is a small experiment to determine whether selecting stocks or ETFs based o
 <!-- CONFIGURATION -->
 ## Configuration
 
-Once you have a Reddit developer account, you'll receive a client ID and a client secret. Add these as environment variables in your system using `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`. Additionally, install the `praw` library using pip.
+Once you have a Reddit developer account, you'll receive a client ID and a client secret. Add these as environment variables in your system using `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`. Additionally, install the `praw` library using pip:
+
+```sh
+pip install praw
+```
 
 <!-- HOW TO USE -->
 ## How to Use
 
-Starting with version 1.0.0, simply run `python3 main.py`.
+Starting with version 2.0.0, you can run the tool from the command line with configurable parameters:
+
+```sh
+python3 main.py --subreddit investing --limit 100 --num_results 50
+```
+
+### Arguments:
+
+- `--subreddit`: The subreddit to analyze (default: `investing`).
+- `--limit`: Number of posts to process (default: `100`).
+- `--num_results`: Number of top results to display (default: `50`).
 
 <!-- DATASET -->
 ## Dataset
@@ -46,7 +60,7 @@ Starting with version 1.0.0, simply run `python3 main.py`.
 This dataset was generated on January 11, 2025, and retrieves the top 50 tickers from 200 subreddits:
 
 | Rank | Ticker/Term | Mentions |
-|------|-------------|----------|
+| ---- | ----------- | -------- |
 | 1    | ETF         | 2922     |
 | 2    | VTI         | 710      |
 | 3    | VOO         | 706      |
@@ -106,9 +120,9 @@ As you can see, the data for this release isn't perfect, but it provides a found
 ### Portfolio 1
 
 | Ticker | Current Value (USD) | 1-Year Growth (%) | 5-Year Growth (%) | Post-Experiment Growth (2025–2026) (%) |
-|--------|----------------------|-------------------|-------------------|----------------------------------|
-| SCHD   | 27.01               | 7.26%            | 41.33%            | TBD                              |
-| TSLA   | 394.74              | 68.09%           | 1,138.83%         | TBD                              |
-| QQQ    | 507.21              | 26.99%           | 135.90%           | TBD                              |
-| VOO    | 533.89              | 24.61%           | 81.16%            | TBD                              |
-| NVDA   | 135.91              | 163.66%          | 2,193.13%         | TBD                              |
+| ------ | ------------------- | ----------------- | ----------------- | -------------------------------------- |
+| SCHD   | 27.01               | 7.26%             | 41.33%            | TBD                                    |
+| TSLA   | 394.74              | 68.09%            | 1,138.83%         | TBD                                    |
+| QQQ    | 507.21              | 26.99%            | 135.90%           | TBD                                    |
+| VOO    | 533.89              | 24.61%            | 81.16%            | TBD                                    |
+| NVDA   | 135.91              | 163.66%           | 2,193.13%         | TBD                                    |
