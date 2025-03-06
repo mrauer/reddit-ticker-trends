@@ -13,7 +13,7 @@ def create_reddit_client():
     return praw.Reddit(
         client_id=os.getenv('REDDIT_CLIENT_ID'),
         client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
-        user_agent='Reddit Ticker Trends 1.0'
+        user_agent='Reddit Ticker Trends 2.0'
     )
 
 
@@ -25,7 +25,7 @@ def extract_stock_symbols(text, valid_symbols=None):
     :param valid_symbols: A list or set of valid stock symbols for validation (optional).
     :return: A list of extracted stock symbols.
     """
-    stock_pattern = r'\b[A-Z]{3,5}\b'
+    stock_pattern = r'\b[A-Z]{2,5}\b'
     symbols = re.findall(stock_pattern, text)
 
     if valid_symbols:
@@ -75,7 +75,7 @@ def main():
     symbols = process_posts_and_comments(subreddit, reddit)
     ranked_symbols = rank_symbols(symbols)
 
-    print("Top 10 most popular stock symbols mentioned:")
+    print("Top 50 most popular stock symbols mentioned:")
     for rank, (symbol, count) in enumerate(ranked_symbols[:50], start=1):
         print(f"{rank}. {symbol} (mentioned {count} times)")
 
