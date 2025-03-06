@@ -18,6 +18,14 @@ def create_reddit_client():
     )
 
 
+STOPLIST = {
+    "USA", "ETF", "SEC", "USD", "US", "AI", "OP", "GBP", "IRA", "BTC",
+    "UK", "IMO", "EU", "PM", "IRS", "NOT", "IPO", "YTD", "HSA", "CEO",
+    "GDP", "UTC", "THIS", "COVID", "NYSE", "AND", "ETH", "CD", "LOL",
+    "IMHO", "URL", "EDIT"
+}
+
+
 def extract_stock_symbols(text, valid_symbols=None):
     """
     Extract stock symbols from text.
@@ -28,6 +36,7 @@ def extract_stock_symbols(text, valid_symbols=None):
     """
     stock_pattern = r'\b[A-Z]{2,5}\b'
     symbols = re.findall(stock_pattern, text)
+    symbols = [symbol for symbol in symbols if symbol not in STOPLIST]
 
     if valid_symbols:
         symbols = [symbol for symbol in symbols if symbol in valid_symbols]
