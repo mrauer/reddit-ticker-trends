@@ -3,6 +3,7 @@ import praw
 import re
 import argparse
 from collections import Counter
+from datetime import datetime
 
 
 def create_reddit_client():
@@ -77,6 +78,22 @@ def rank_symbols(symbols, num_results):
     return Counter(symbols).most_common(num_results)
 
 
+def log_data(ticker, date, mentions, limit, subreddit, num_results, filename="reddit_ticker_trends.log"):
+    """
+    Log the data to a file.
+
+    :param ticker: The stock ticker symbol.
+    :param date: The date in YYYY-MM-DD format.
+    :param mentions: The number of mentions of the ticker.
+    :param limit: The number of posts processed.
+    :param subreddit: The subreddit analyzed.
+    :param num_results: The number of results displayed.
+    :param filename: The name of the log file.
+    """
+    with open(filename, "a") as log_file:
+        log_file.write(f"{ticker}, {date}, {mentions}, {limit}, {subreddit}, {num_results}\n")
+
+
 def main():
     """
     Main function to run the Reddit Ticker Trends scanner.
@@ -95,6 +112,7 @@ def main():
     print(f"Top {args.num_results} most popular stock symbols mentioned:")
     for rank, (symbol, count) in enumerate(ranked_symbols, start=1):
         print(f"{rank}. {symbol} (mentioned {count} times)")
+        log_data(symbol, datetime.now().strftime('%Y-%m-%d'), count, args.limit, args.subreddit, args.num_results)
 
 
 if __name__ == "__main__":
