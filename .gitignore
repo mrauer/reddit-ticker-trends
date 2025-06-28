@@ -1,1 +1,5 @@
+# Log files
 reddit_ticker_trends.log
+
+# Virtual environment
+venv/
