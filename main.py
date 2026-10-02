@@ -1,9 +1,11 @@
 import argparse
+import json
 import logging
 import os
 import re
 import ssl
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 import certifi
 import nltk
@@ -12,7 +14,7 @@ import yfinance as yf
 from nltk.corpus import words
 
 # Version
-VERSION = "v3.0.0"
+VERSION = "v4.0.0"
 
 # Fix certificate verification issue for nltk downloads
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
@@ -39,38 +41,41 @@ console_handler.setFormatter(formatter)
 console_handler.setLevel(logging.INFO)
 log.addHandler(console_handler)
 
-STATIC_STOPWORDS = {
-    "ADDS", "ALGO", "APHA", "AREAS", "ASKED", "ATM", "ATH", "BALLS", "BANKS",
-    "BAGS", "BEATS", "BETS", "BIDEN", "BLOG", "BOFA", "BOOKS", "BORED", "BTW",
-    "BUCKS", "BUYS", "CALLS", "CARES", "CARDS", "CD", "CDS", "CEO", "CLASSIFY",
-    "CNBC", "CO", "COINS", "COM", "CONDO", "COSTS", "CUTS", "DCA", "DEALS",
-    "DEMS", "DIDN", "DOESN", "DROPS", "DRUGS", "EMOJI", "ENDS", "ERROR", "ETF",
-    "ETFDB", "ETFS", "ETC", "EURO", "EV", "EVS", "FACTS", "FAILED", "FALLS",
-    "FEELS", "FEES", "FEWER", "FIRMS", "FLOWS", "FML", "FOMO", "FSD", "FUELS",
-    "FUCK", "GAMES", "GBP", "GETS", "GIVES", "GOALS", "GONNA", "GOTTA", "GOV",
-    "GROWS", "GUYS", "HADN", "HAHA", "HANDS", "HAS", "HASNT", "HEADS", "HEARD",
-    "HELD", "HELPS", "HIGH", "HIGHS", "HITS", "HMM", "HOLDS", "HTML", "HTTP",
-    "HTM", "HOURS", "HSA", "HYPE", "IB", "IDEAS", "IMGUR", "IMHO", "IM", "INC",
-    "INTEL", "IPO", "IRAS", "ISN", "ISNT", "ISH", "JOBS", "KEEPS", "KINDA",
-    "KINDS", "KNOWS", "LAWS", "LEAPS", "LETFS", "LETS", "LIBOR", "LIKED",
-    "LIKES", "LINES", "LIVE", "LIVES", "LL", "LMAO", "LOANS", "LOL", "LOSES",
-    "LOOKS", "LOWS", "MAKES", "MEANS", "MEGA", "MEME", "MEMES", "MF", "MM",
-    "MONEY", "MOVES", "MOVED", "MULTI", "NAH", "NAV", "NBBO", "NAMES", "NFT",
-    "NOTES", "NP", "NYSE", "OBAMA", "OKAY", "ONES", "ORG", "OTC", "OWNED",
-    "PAID", "PARTS", "PDF", "PE", "PHP", "PICKS", "PLANS", "PLAYS", "PNG",
-    "PONZI", "POSTS", "POTX", "POOLS", "PUTIN", "PUTS", "REITS", "RISES",
-    "RISKS", "ROLLS", "ROTH", "RULES", "RUNS", "SAYS", "SAFER", "SALES",
-    "SEEMS", "SELLS", "SHIT", "SHOWS", "SOCKS", "SP", "SPDR", "SPX", "SQ",
-    "STOPS", "SUCKS", "SWAPS", "SAYS", "TALKS", "TAKES", "TAXES", "TDA",
-    "TELLS", "TERMS", "TESLA", "THCX", "TOOLS", "TONS", "TYPES", "URL",
-    "USA", "USE", "USED", "USES", "USER", "USERS", "USING", "UTC", "UTM",
-    "VE", "VOTED", "WANNA", "WARNING", "WARS", "WASN", "WANTS", "WEEKS",
-    "WEREN", "WIK", "WIKI", "WINS", "WIPED", "WOODS", "WORDS", "WP", "WWW",
-    "YTD", "YOUTU", "YOURE", "YUP"
-}
+# yfinance logs expected lookup failures (invalid/delisted symbols) at ERROR level;
+# we already catch and log these ourselves in classify_symbol, so quiet its logger.
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 # --- Large English word list from nltk corpus (uppercase) ---
 ENGLISH_WORDS = set(word.upper() for word in words.words())
+
+# --- Ticker classification cache ---
+# Classifying a symbol via yfinance is the authoritative check for "is this a
+# real ticker" (not a hardcoded guess), so we cache every result (including
+# "Unknown") on disk and never pay for the same lookup twice. This also means
+# junk acronyms get permanently filtered out after the first time they're seen,
+# without anyone having to hand-maintain a stopword list.
+CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ticker_cache.json')
+
+
+def load_ticker_cache():
+    try:
+        with open(CACHE_PATH, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_ticker_cache(cache):
+    with open(CACHE_PATH, 'w') as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
+# Real, tradable tickers that are also common English words/abbreviations, so
+# yfinance's validity check can't tell them apart from ordinary usage. Unlike
+# the old stopword list, this isn't guessing at junk (the cache handles that
+# automatically) - every entry here is a confirmed real ticker kept out on
+# purpose. Extend only when a genuine word/ticker collision like this is found.
+AMBIGUOUS_WORD_TICKERS = {"USA", "UK", "CD", "IPO", "TIPS"}
 
 
 # --- Reddit Client Setup ---
@@ -88,12 +93,13 @@ def extract_stock_symbols(text):
     if not text:
         return []
     pattern = r'\b[A-Z]{2,5}\b'  # 2 to 5 uppercase letters, typical ticker length
-    found = re.findall(pattern, text.upper())
+    found = re.findall(pattern, text)  # match existing case only; avoids false positives from lowercase words
 
-    # Filter out words in STATIC_STOPWORDS or ENGLISH_WORDS
+    # Filter out real English words; remaining junk acronyms (WSB, VIX, etc.)
+    # get caught later by live ticker classification instead of a static list.
     cleaned = [
         s for s in found
-        if s not in STATIC_STOPWORDS and s not in ENGLISH_WORDS
+        if s not in ENGLISH_WORDS and s not in AMBIGUOUS_WORD_TICKERS
     ]
     if cleaned:
         log.debug(f"Extracted symbols (after filtering English words) from text: {cleaned}")
@@ -101,26 +107,36 @@ def extract_stock_symbols(text):
 
 
 # --- Reddit Scraping ---
-def process_subreddit(reddit, subreddit, limit):
+def process_submission(submission):
+    try:
+        log.debug(f"Reading post: {submission.title[:80]}")
+        symbols = extract_stock_symbols(submission.title)
+        symbols += extract_stock_symbols(submission.selftext)
+
+        submission.comments.replace_more(limit=0)
+        for comment in submission.comments.list():
+            symbols += extract_stock_symbols(comment.body)
+        return symbols
+    except Exception as e:
+        log.error(f"Error processing post {submission.id}: {e}")
+        return []
+
+
+def process_subreddit(reddit, subreddit, limit, max_workers=8):
     log.info(f"Processing subreddit: r/{subreddit} | Posts to analyze: {limit}")
     symbols = []
-    count = 0
 
     try:
-        for submission in reddit.subreddit(subreddit).search("ETF", limit=limit):
-            count += 1
-            log.debug(f"Reading post: {submission.title[:80]}")
-            symbols += extract_stock_symbols(submission.title)
-            symbols += extract_stock_symbols(submission.selftext)
-
-            submission.comments.replace_more(limit=0)
-            for comment in submission.comments.list():
-                symbols += extract_stock_symbols(comment.body)
-
+        submissions = list(reddit.subreddit(subreddit).search("ETF", limit=limit))
     except Exception as e:
         log.error(f"Error accessing subreddit: {e}")
+        return symbols
 
-    log.info(f"Processed {count} posts, found {len(symbols)} raw symbols")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for result in executor.map(process_submission, submissions):
+            symbols += result
+
+    log.info(f"Processed {len(submissions)} posts, found {len(symbols)} raw symbols")
     return symbols
 
 
@@ -132,30 +148,53 @@ def rank_symbols(symbols):
     return ranked
 
 
+# Below this daily share volume, a symbol is too obscure/illiquid to plausibly
+# be what's actually being discussed - catches real-but-irrelevant collisions
+# like ticker CAGR (an obscure micro-cap) vs. the acronym "CAGR" (compound
+# annual growth rate), without having to know about each one in advance.
+MIN_DAILY_VOLUME = 10_000
+
+
 # --- Classification using yfinance ---
-def classify_symbols(symbols, classify_limit):
-    classifications = {}
-    log.info(f"Classifying {classify_limit} symbols...")
+def classify_symbol(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.fast_info or ticker.info
+        qt = info.get("quoteType", info.get("type", "")).lower()
+        volume = info.get("lastVolume") or 0
 
-    for symbol in symbols[:classify_limit]:
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.fast_info or ticker.info
-            qt = info.get("quoteType", info.get("type", "")).lower()
-
-            if "etf" in qt:
-                cls = "ETF"
-            elif "equity" in qt or qt == "stock":
-                cls = "Stock"
-            else:
-                cls = "Unknown"
-
-            log.debug(f"{symbol}: classified as {cls} (quoteType: {qt})")
-        except Exception as e:
+        if volume < MIN_DAILY_VOLUME:
             cls = "Unknown"
-            log.warning(f"Failed to classify {symbol}: {e}")
+        elif "etf" in qt:
+            cls = "ETF"
+        elif "equity" in qt or qt == "stock":
+            cls = "Stock"
+        else:
+            cls = "Unknown"
 
-        classifications[symbol] = cls
+        log.debug(f"{symbol}: classified as {cls} (quoteType: {qt}, volume: {volume})")
+    except Exception as e:
+        cls = "Unknown"
+        log.warning(f"Failed to classify {symbol}: {e}")
+
+    return symbol, cls
+
+
+def classify_symbols(symbols, classify_limit, max_workers=10):
+    cache = load_ticker_cache()
+    to_classify = symbols[:classify_limit]
+
+    classifications = {s: cache[s] for s in to_classify if s in cache}
+    uncached = [s for s in to_classify if s not in cache]
+
+    log.info(f"Classifying {len(uncached)} symbols ({len(classifications)} from cache)...")
+
+    if uncached:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for symbol, cls in executor.map(classify_symbol, uncached):
+                classifications[symbol] = cls
+                cache[symbol] = cls
+        save_ticker_cache(cache)
 
     return classifications
 
@@ -180,7 +219,11 @@ def main():
 
     ranked_all = rank_symbols(symbols)
 
-    classify_limit = args.num_results  # classify only top num_results, not hardcoded 100
+    # Classify more candidates than num_results: without a stopword list, some
+    # non-ticker acronyms (not in the English dictionary) still rank highly and
+    # get discarded after classification, so we need headroom to still surface
+    # num_results valid Stock/ETF symbols.
+    classify_limit = min(len(ranked_all), args.num_results * 3)
     top_candidates = [s for s, _ in ranked_all[:classify_limit]]
 
     classifications = classify_symbols(top_candidates, classify_limit)

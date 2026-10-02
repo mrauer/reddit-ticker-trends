@@ -1,5 +1,8 @@
 # Log files
 reddit_ticker_trends.log
 
+# Self-building ticker classification cache
+ticker_cache.json
+
 # Virtual environment
 venv/
